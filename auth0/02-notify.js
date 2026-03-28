@@ -1,27 +1,28 @@
-function (user, context, callback) {
+const fetch = require('node-fetch');
+exports.onExecutePostLogin = async (event, api) => {
     // Apply this rule only for Hereditas, and bypass it for other apps
-    context.clientMetadata = context.clientMetadata || {};
-    if (!context.clientMetadata.hereditas) {
-        return callback(null, user, context);
+    if (!event.client.metadata?.hereditas) {
+        return;
     }
 
+    const { WEBHOOK_URL } = event.secrets;
+
     // Skip if there's no webhook
-    if (!configuration || !configuration.WEBHOOK_URL || configuration.WEBHOOK_URL === '0') {
-        return callback(null, user, context);
+    if (!WEBHOOK_URL || WEBHOOK_URL === '0') {
+        return;
     }
 
     // List of owners
     const owners = /*%OWNERS%*/;
 
     // Trigger the webhook
-    const role = (owners.some((email) => email === user.email)) ? 'owner' : 'user';
+    const role = (owners.some((email) => email === event.user.email)) ? 'owner' : 'user';
     const body = {
-        value1: `New Hereditas login on ${(new Date()).toUTCString()}. User: ${user.email} (role: ${role})`,
-        value2: user.email,
+        value1: `New Hereditas login on ${(new Date()).toUTCString()}. User: ${event.user.email} (role: ${role})`,
+        value2: event.user.email,
         value3: role
     };
-    const fetch = require('node-fetch@2.6.0');
-    fetch(configuration.WEBHOOK_URL, {
+    fetch(WEBHOOK_URL, {
         method: 'POST',
         body: JSON.stringify(body),
         headers: {'Content-Type': 'application/json'}
@@ -29,14 +30,14 @@ function (user, context, callback) {
         // Ensure the response has a valid status code
         .then((response) => {
             if (response.ok) {
-                return callback(null, user, context);
+                return;
             } else {
-                return Promise.reject('Invalid response status code');
+                return api.access.deny("Invalid response status code");
             }
         })
         // Catch errors and fail (fail the login even if the notification fails to send)
         .catch((err) => {
             console.error(err);
-            callback(new Error('Error sending the notification'));
+            return api.access.deny("Error sending the notification");
         });
-}
+};

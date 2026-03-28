@@ -36,11 +36,12 @@ In the next step, you need to grant this application access to the Auth0 APIs. F
 - read:clients
 - update:clients
 - create:clients
-- read:rules
-- update:rules
-- delete:rules
-- create:rules
-- update:rules_configs
+- read:actions
+- update:actions
+- delete:actions
+- create:actions
+- update:triggers
+- read:triggers
 
 ![Auth0 management portal: enable Auth0 Management APIs](/images/auth0-setup-create-application-api.png)
 

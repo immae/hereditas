@@ -100,10 +100,7 @@ class Auth0Management {
      * @returns {string} Client ID of the updated application
      */
     async updateClient(clientId) {
-        const params = {
-            client_id: clientId
-        }
-        const result = await this._management.clients.update(params, this._clientConfiguration())
+        const result = await this._management.clients.update(clientId, this._clientConfiguration())
         if (result) {
             return result.client_id
         }
@@ -128,7 +125,7 @@ class Auth0Management {
      * @param {string} clientId - Client ID
      */
     async getClient(clientId) {
-        const data = await this._management.clients.get({client_id: clientId})
+        const data = await this._management.clients.get(clientId)
         if (!data || data.client_id != clientId) {
             return null
         }
@@ -142,20 +139,23 @@ class Auth0Management {
      * @returns {Array<string>} New list of rules managed by Hereditas
      */
     async syncRules(ruleIds) {
+        this._management.actions.triggers.bindings.updateMany("post-login", {
+          bindings: []
+        })
         // First, check if the rules still exist
         if (ruleIds && ruleIds.length) {
             const rules = await this.listRules()
-            if (rules && Array.isArray(rules) && rules.length) {
+            if (rules.data && Array.isArray(rules.data) && rules.data.length) {
                 // Delete all rules from the array that still exist
                 const promises = []
-                for (let i = 0; i < rules.length; i++) {
-                    const el = rules[i]
+                for (let i = 0; i < rules.data.length; i++) {
+                    const el = rules.data[i]
                     if (!el || !el.id) {
                         continue
                     }
 
                     if (ruleIds.indexOf(el.id) != -1) {
-                        promises.push(this._management.rules.delete({id: el.id}))
+                        promises.push(this._management.actions.delete(el.id))
                     }
                 }
 
@@ -175,7 +175,24 @@ class Auth0Management {
      * @async
      */
     listRules() {
-        return this._management.rules.getAll()
+        return this._management.actions.list()
+    }
+
+    async waitAllDeployed() {
+        const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+        while(true) {
+          const rules = await this.listRules()
+          let lastloop = true
+          if (rules.data && Array.isArray(rules.data)) {
+            for (let i = 0; i < rules.data.length; i++) {
+              lastloop = lastloop && rules.data[i].all_changes_deployed
+            }
+          }
+          if (lastloop) {
+            break
+          }
+          await delay(1000)
+        }
     }
 
     /**
@@ -197,6 +214,11 @@ class Auth0Management {
             'Hereditas 02 - Notify',
             'Hereditas 03 - Wait logic'
         ]
+        const secrets = [
+            [],
+            [ { name: "WEBHOOK_URL", value: this._config.get('webhookUrl') || '0' } ],
+            [ { name: "APP_TOKEN", value: this._config.get('appToken') } ]
+        ]
 
         // Replacer function in scripts
         const users = this._config.get('users') || []
@@ -213,51 +235,37 @@ class Auth0Management {
         // Create all rules, in order
         const promises = []
         for (let i = 0; i < 3; i++) {
-            promises.push(this._management.rules.create({
-                enabled: true,
-                stage: 'login_success',
-                order: i + 1,
+            promises.push(this._management.actions.create({
                 name: names[i],
-                script: replacer(scripts[i])
+                code: replacer(scripts[i]),
+                supported_triggers: [{id:"post-login",version:"v2"}],
+                dependencies: [
+                  { name: "node-fetch", version: "2.6.0" },
+                  { name: "auth0", version: "5.5.0" },
+                ],
+                deploy: true,
+                secrets: secrets[i],
+                runtime: "node22"
             }))
         }
         const results = await Promise.all(promises)
+        const actionids = results.map((el) => el.id)
+
+        await this.waitAllDeployed()
+
+        this._management.actions.triggers.bindings.updateMany("post-login", {
+          bindings: actionids.map((i) => {
+            return {
+              ref: {
+                type: "action_id",
+                value: i
+              }
+            }
+          })
+        })
 
         // Return the IDs of the rules
         return results.map((el) => el.id)
-    }
-
-    /**
-     * List all rules configurations (only the keys, not values)
-     *
-     * @returns {Array} Array with all the rules configurations
-     * @async
-     */
-    listRulesConfigs() {
-        return this._management.rulesConfigs.getAll()
-    }
-
-    /**
-     * Updates all rules configurations. This creates new configurations, and overwrites existing ones.
-     *
-     * @async
-     */
-    async updateRulesConfigs() {
-        const rulesConfigs = {
-            APP_TOKEN: this._config.get('appToken'),
-            AUTH0_CLIENT_ID: this._config.get('auth0.managementClientId'),
-            AUTH0_CLIENT_SECRET: this._config.get('auth0.managementClientSecret'),
-            WEBHOOK_URL: this._config.get('webhookUrl') || '0'
-        }
-
-        // Create all rules configurations
-        const promises = []
-        for (const key in rulesConfigs) {
-            const value = rulesConfigs[key]
-            promises.push(this._management.rulesConfigs.set({key}, {value}))
-        }
-
-        await Promise.all(promises)
     }
 
     /**

@@ -27,9 +27,6 @@ class Auth0SetupCommand extends Command {
         const ruleIds = await auth0Management.syncRules(config.get('auth0.rules'))
         config.set('auth0.rules', ruleIds)
 
-        // Third step: create rule settings
-        await auth0Management.updateRulesConfigs()
-
         // Save config changes
         await config.save()
 
